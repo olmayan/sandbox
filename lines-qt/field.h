@@ -3,6 +3,9 @@
 
 #include <QIntegerForSize>
 
+#define W 9
+#define H 9
+
 class Field
 {
 public:
@@ -19,6 +22,7 @@ public:
     void clear();
 
     bool hasPath(int x0, int y0, int x, int y, Field *searchResult);
+    void shortestPath(int x, int y, Field *searchResult);
 
 private:
     int *pField;

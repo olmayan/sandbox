@@ -3,8 +3,6 @@
 #include <QTime>
 
 #define CELL_SIDE 40
-#define W 9
-#define H 9
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent)
@@ -59,8 +57,14 @@ MainWindow::MainWindow(QWidget *parent) :
     selectItem->setVisible(false);
     graphicsScene->addItem(selectItem);
 
-    //Field search(pGameField);
-    //if (pGameField->hasPath(2, 5, 7, 4, &search)) qDebug("Has Path\n"); else qDebug("Does not have\n");
+    pathMarkers.resize(W * H);
+    for (int i = 0; i < W * H; i++)
+    {
+        QGraphicsSvgItem *item = new QGraphicsSvgItem(":/images/pathmarker.svg");
+        item->setZValue(1);
+        item->setVisible(false);
+        graphicsScene->addItem(item);
+    }
 
     setWindowTitle(tr("Lines-Qt"));
     setMinimumSize(CELL_SIDE * W, CELL_SIDE * H);
@@ -122,7 +126,9 @@ void MainWindow::processMouseEvent(QMouseEvent *event)
 {
     int x = event->x() / CELL_SIDE, y = event->y() / CELL_SIDE;
 
+#ifdef QT_DEBUG
     qDebug("%d, %d", x, y);
+#endif
 
     if (x < 0 || y < 0 || x > W - 1 || y > H - 1)
         return;
@@ -135,9 +141,18 @@ void MainWindow::processMouseEvent(QMouseEvent *event)
         return;
     }
 
-    Field path(pGameField);
-    if (pGameField->hasPath(selection.x(), selection.y(), x, y, &path))
+    Field pathMap(pGameField);
+    if (pGameField->hasPath(selection.x(), selection.y(), x, y, &pathMap))
     {
+        Field path(W, H);
+        pathMap.shortestPath(x, y, &path);
+
+        for (int x_ = 0; x_ < W; x_++)
+            for (int y_ = 0; y_ < W; y_++)
+                pathMarkers[x_ + W * y_]->setVisible(path.cell(x_, y_));
+
+        return;
+
         pGameField->setCell(x, y, pGameField->cell(selection.x(), selection.y()));
         pGameField->setCell(selection.x(), selection.y(), 0);
         QGraphicsSvgItem *ball = balls[selection.x() + W * selection.y()];

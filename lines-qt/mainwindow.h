@@ -31,6 +31,7 @@ private:
     QGraphicsSvgItem *selectItem;
     QPoint selection;
     QVector<QGraphicsSvgItem *> balls;
+    QVector<QGraphicsSvgItem *> pathMarkers;
     QStateMachine stateMachine;
 
 private slots:

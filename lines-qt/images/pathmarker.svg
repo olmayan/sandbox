@@ -14,7 +14,7 @@
    id="tile"
    version="1.1"
    inkscape:version="0.48.3.1 r9886"
-   sodipodi:docname="select.svg">
+   sodipodi:docname="pathmarker.svg">
   <defs
      id="defs" />
   <sodipodi:namedview
@@ -53,7 +53,7 @@
      id="layer"
      transform="translate(0,-1012.3622)">
     <rect
-       style="fill:#ff8080;fill-opacity:0.75294118;stroke:none"
+       style="fill:#8080ff;fill-opacity:0.75294118;stroke:none"
        id="rect2994"
        width="40"
        height="40"

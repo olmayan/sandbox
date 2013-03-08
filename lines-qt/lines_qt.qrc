@@ -9,5 +9,6 @@
         <file>images/ball6.svg</file>
         <file>images/ball7.svg</file>
         <file>images/select.svg</file>
+        <file>images/pathmarker.svg</file>
     </qresource>
 </RCC>

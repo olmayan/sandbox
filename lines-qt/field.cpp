@@ -85,7 +85,7 @@ void Field::clear()
 bool Field::hasPath(int x1, int y1, int x2, int y2, Field *searchResult)
 {
     int step = searchResult->pField[x1 + w * y1] = -1;
-    int goal = searchResult->pField[x2 + w * y2] = -w * h;
+    //int goal = searchResult->pField[x2 + w * y2] = -w * h;
 
     bool bContinue;
     int x, y;
@@ -99,45 +99,31 @@ bool Field::hasPath(int x1, int y1, int x2, int y2, Field *searchResult)
             {
                 if (searchResult->cell(x, y) == step)
                 {
-                    if (x > 0)
+                    if (x == x2 && y == y2)
+                        return true;
+
+                    if (x > 0 && searchResult->cell(x - 1, y) == 0)
                     {
-                        if (searchResult->cell(x - 1, y) == 0)
-                        {
-                            searchResult->setCell(x - 1, y, step - 1);
-                            bContinue = true;
-                        }
-                        else if (searchResult->cell(x - 1, y) == goal)
-                            return true;
+                        searchResult->setCell(x - 1, y, step - 1);
+                        bContinue = true;
                     }
-                    if (x < w - 1)
+
+                    if (x < w - 1 && searchResult->cell(x + 1, y) == 0)
                     {
-                        if (searchResult->cell(x + 1, y) == 0)
-                        {
-                            searchResult->setCell(x + 1, y, step - 1);
-                            bContinue = true;
-                        }
-                        else if (searchResult->cell(x + 1, y) == goal)
-                            return true;
+                         searchResult->setCell(x + 1, y, step - 1);
+                        bContinue = true;
                     }
-                    if (y > 0)
+
+                    if (y > 0 && searchResult->cell(x, y - 1) == 0)
                     {
-                        if (searchResult->cell(x, y - 1) == 0)
-                        {
-                            searchResult->setCell(x, y - 1, step - 1);
-                            bContinue = true;
-                        }
-                        else if (searchResult->cell(x, y - 1) == goal)
-                            return true;
+                        searchResult->setCell(x, y - 1, step - 1);
+                        bContinue = true;
                     }
-                    if (y < h - 1)
+
+                    if (y < h - 1 && searchResult->cell(x, y + 1) == 0)
                     {
-                        if (searchResult->cell(x, y + 1) == 0)
-                        {
-                            searchResult->setCell(x, y + 1, step - 1);
-                            bContinue = true;
-                        }
-                        else if (searchResult->cell(x, y + 1) == goal)
-                            return true;
+                        searchResult->setCell(x, y + 1, step - 1);
+                        bContinue = true;
                     }
                 }
             }
@@ -146,4 +132,9 @@ bool Field::hasPath(int x1, int y1, int x2, int y2, Field *searchResult)
     } while (bContinue);
 
     return false;
+}
+
+void Field::shortestPath(int x, int y, Field *searchResult)
+{
+
 }
