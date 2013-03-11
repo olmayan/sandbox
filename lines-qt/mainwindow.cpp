@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include <QPainter>
 #include <QTime>
+#include <QPropertyAnimation>
 
 #define CELL_SIDE 40
 
@@ -58,13 +59,16 @@ MainWindow::MainWindow(QWidget *parent) :
     graphicsScene->addItem(selectItem);
 
     pathMarkers.resize(W * H);
-    for (int i = 0; i < W * H; i++)
-    {
-        QGraphicsSvgItem *item = new QGraphicsSvgItem(":/images/pathmarker.svg");
-        item->setZValue(1);
-        item->setVisible(false);
-        graphicsScene->addItem(item);
-    }
+    for (int x = 0; x < W; x++)
+        for (int y = 0; y < H; y++)
+        {
+            QGraphicsSvgItem *item = new QGraphicsSvgItem(":/images/pathmarker.svg");
+            item->setPos(x * CELL_SIDE, y * CELL_SIDE);
+            item->setZValue(1);
+            item->setVisible(false);
+            graphicsScene->addItem(item);
+            pathMarkers[x + W * y] = item;
+        }
 
     setWindowTitle(tr("Lines-Qt"));
     setMinimumSize(CELL_SIDE * W, CELL_SIDE * H);
@@ -144,24 +148,49 @@ void MainWindow::processMouseEvent(QMouseEvent *event)
     Field pathMap(pGameField);
     if (pGameField->hasPath(selection.x(), selection.y(), x, y, &pathMap))
     {
-        Field path(W, H);
-        pathMap.shortestPath(x, y, &path);
+        QGraphicsSvgItem *ball = balls[selection.x() + W * selection.y()];
 
-        for (int x_ = 0; x_ < W; x_++)
-            for (int y_ = 0; y_ < W; y_++)
-                pathMarkers[x_ + W * y_]->setVisible(path.cell(x_, y_));
+        selectItem->setVisible(false);
 
-        return;
+        //for (int x_ = 0; x_ < W; x_++)
+        //    for (int y_ = 0; y_ < H; y_++)
+        //        pathMarkers[x_ + W * y_]->setVisible(path.cell(x_, y_));
+
+        //for (int i = 0; i < W * H; i++)
+        //    pathMarkers[i]->setVisible(false);
+
+        QLinkedList<QPoint> waypoints = pathMap.waypoints(x, y);
+        QLinkedListIterator<QPoint> iter(waypoints);
+#ifdef QT_DEBUG
+        qDebug("%d", waypoints.count());
+#endif
+
+        group = new QSequentialAnimationGroup(graphicsScene);
+
+        QPoint cur = iter.next();
+        while (iter.hasNext())
+        {
+            QPoint next = iter.next();
+            int diff = qAbs(next.x() - cur.x()) + qAbs(next.y() - cur.y());
+            QPropertyAnimation *anim = new QPropertyAnimation(ball, "pos");
+            anim->setDuration(diff * 50);
+            anim->setStartValue(QPoint(cur.x() * CELL_SIDE, cur.y() * CELL_SIDE));
+            anim->setEndValue(QPoint(next.x() * CELL_SIDE, next.y() * CELL_SIDE));
+            group->addAnimation(anim);
+
+            //pathMarkers[next.x() + W * next.y()]->setVisible(true);
+
+            cur = next;
+        }
 
         pGameField->setCell(x, y, pGameField->cell(selection.x(), selection.y()));
         pGameField->setCell(selection.x(), selection.y(), 0);
-        QGraphicsSvgItem *ball = balls[selection.x() + W * selection.y()];
-        balls[x + W * y] = ball;
-        balls[selection.x() + W * selection.y()] = NULL;
-        ball->setPos(x * CELL_SIDE,  y * CELL_SIDE);
-        selection = QPoint(-1, -1);
-        selectItem->setVisible(false);
 
-        //stateMachine.
+        balls[x + W * y] = balls[selection.x() + W * selection.y()];
+        balls[selection.x() + W * selection.y()] = NULL;
+
+        selection = QPoint(-1, -1);
+
+        group->start(QAbstractAnimation::DeleteWhenStopped);
     }
 }

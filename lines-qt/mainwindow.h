@@ -5,7 +5,7 @@
 #include <QGraphicsScene>
 #include "graphicsview.h"
 #include <QGraphicsSvgItem>
-#include <QStateMachine>
+#include <QSequentialAnimationGroup>
 #include <QMouseEvent>
 #include "field.h"
 
@@ -32,7 +32,7 @@ private:
     QPoint selection;
     QVector<QGraphicsSvgItem *> balls;
     QVector<QGraphicsSvgItem *> pathMarkers;
-    QStateMachine stateMachine;
+    QSequentialAnimationGroup *group;
 
 private slots:
     void processMouseEvent(QMouseEvent *);

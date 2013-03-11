@@ -136,5 +136,78 @@ bool Field::hasPath(int x1, int y1, int x2, int y2, Field *searchResult)
 
 void Field::shortestPath(int x, int y, Field *searchResult)
 {
+    int c;
+    while ((c = cell(x, y)) < -1)
+    {
+#ifdef QT_DEBUG
+        qDebug("Cur.Pos (%d, %d)", x, y);
+#endif
+        searchResult->setCell(x, y, c);
+        if (x > 0 && cell(x - 1, y) == c + 1)
+            x--;
+        else if (y > 0 && cell(x, y - 1) == c + 1)
+            y--;
+        else if (x < W - 1 && cell(x + 1, y) == c + 1)
+            x++;
+        else if (y < H - 1 && cell(x, y + 1) == c + 1)
+            y++;
+    }
+#ifdef QT_DEBUG
+    qDebug("shortestPath ended.");
+#endif
+}
 
+QLinkedList<QPoint> Field::waypoints(int x, int y)
+{
+    QLinkedList<QPoint> result;
+    /*
+      \ 3 /
+      2 + 0
+      / 1 \
+      */
+    int dir = -1;
+    int c;
+    while ((c = cell(x, y)) < -1)
+    {
+        if (x > 0 && cell(x - 1, y) == c + 1)
+        {
+            if (dir != 2)
+            {
+                dir = 2;
+                result.prepend(QPoint(x, y));
+            }
+            x--;
+        }
+        else if (y > 0 && cell(x, y - 1) == c + 1)
+        {
+            if (dir != 3)
+            {
+                dir = 3;
+                result.prepend(QPoint(x, y));
+            }
+            y--;
+        }
+        else if (x < W - 1 && cell(x + 1, y) == c + 1)
+        {
+            if (dir != 0)
+            {
+                dir = 0;
+                result.prepend(QPoint(x, y));
+            }
+            x++;
+        }
+        else if (y < H - 1 && cell(x, y + 1) == c + 1)
+        {
+            if (dir != 1)
+            {
+                dir = 1;
+                result.prepend(QPoint(x, y));
+            }
+            y++;
+        }
+    }
+
+    result.prepend(QPoint(x, y));
+
+    return result;
 }

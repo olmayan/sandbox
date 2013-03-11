@@ -2,6 +2,8 @@
 #define FIELD_H
 
 #include <QIntegerForSize>
+#include <QLinkedList>
+#include <QPoint>
 
 #define W 9
 #define H 9
@@ -23,6 +25,7 @@ public:
 
     bool hasPath(int x0, int y0, int x, int y, Field *searchResult);
     void shortestPath(int x, int y, Field *searchResult);
+    QLinkedList<QPoint> waypoints(int x, int y);
 
 private:
     int *pField;
