@@ -24,7 +24,7 @@ namespace ImageViewer
 
 			list = new ListStore(typeof(string), typeof(Gdk.Pixbuf), typeof(ItemData));
 			list.SetSortColumnId(2, SortType.Ascending);
-			list.SetSortFunc(2, (TreeModel model, TreeIter a0, TreeIter b0) => {
+			list.SetSortFunc(2, (ITreeModel model, TreeIter a0, TreeIter b0) => {
 				ItemData a = (ItemData)model.GetValue(a0, 2);
 				ItemData b = (ItemData)model.GetValue(b0, 2);
 				if (a == null)
@@ -57,6 +57,7 @@ namespace ImageViewer
 				}
 				return result;
 			} );
+
 			view = new IconView(list);
 			view.TextColumn = 0;
 			view.PixbufColumn = 1;
@@ -96,8 +97,10 @@ namespace ImageViewer
 
 			SetSizeRequest(400, 300);
 
-			icon = RenderIcon(Stock.Directory, IconSize.Dialog, string.Empty);
-			fileIcon = RenderIcon(Stock.File, IconSize.Dialog, string.Empty);
+			icon = RenderIconPixbuf(Stock.Directory, IconSize.Dialog);
+			fileIcon = RenderIconPixbuf(Stock.File, IconSize.Dialog);
+			mimeicons = new Dictionary<string, Gdk.Pixbuf>();
+			noicons = new List<string>();
 
 			box.FocusChain = new Widget[] { scrolled, addr };
 
@@ -107,19 +110,25 @@ namespace ImageViewer
 				? Environment.GetEnvironmentVariable("HOME")
 				: Environment.GetEnvironmentVariable("HOMEDRIVE") + Environment.GetEnvironmentVariable("HOMEPATH");
 			LoadFolder(path);
+
+			Console.WriteLine(GLib.ContentType.GetIcon("text/plain").ToString());
 		}
 
 		public void LoadFolder(string pathname, Widget focus = null)
 		{
 			addr.Sensitive = view.Sensitive = false;
+			int selStart, selEnd;
+			addr.GetSelectionBounds(out selStart, out selEnd);
 
 			Thread thread = new Thread(new ThreadStart(delegate {
-				DirectoryInfo dir = new DirectoryInfo(pathname);
-				if (!dir.Exists)
+				DirectoryInfo dir = (pathname == string.Empty) ? null : new DirectoryInfo(pathname);
+				if (dir == null || !dir.Exists)
 				{
-					MessageDialog dlg = new MessageDialog(this, DialogFlags.Modal, MessageType.Warning, ButtonsType.Ok, "Directory does not exist!");
-					dlg.Run();
-					dlg.Destroy();
+					Application.Invoke(delegate {
+						MessageDialog dlg = new MessageDialog(this, DialogFlags.Modal, MessageType.Warning, ButtonsType.Ok, "Directory does not exist!");
+						dlg.Run();
+						dlg.Destroy();
+					} );
 				}
 				else
 				{
@@ -134,7 +143,7 @@ namespace ImageViewer
 						.Select(s => new FileInfo(s)).Where(fi => (fi.Attributes & FileAttributes.Hidden) == 0).ToList();
 					items.AddRange(fileInfos.Select(fi => new object[] { 
 						fi.Name,
-						fileIcon,
+						GetMimeIcon(fi.FullName),
 						new ItemData(fi) } ).ToList());
 						
 					Application.Invoke(delegate { list.Clear();	} );
@@ -148,10 +157,46 @@ namespace ImageViewer
 				Application.Invoke(delegate {
 					addr.Sensitive = view.Sensitive = true;
 					((focus == null) ? view : focus).GrabFocus();
+					if (focus == addr) addr.SelectRegion(selStart, selEnd);
 				} );
 			} ));
 
 			thread.Start();
+		}
+
+		void LoadMimeIcons()
+		{
+		}
+
+		Gdk.Pixbuf GetMimeIcon(string filename)
+		{
+			byte data;
+			bool uncertain;
+
+			string ctype = GLib.ContentType.Guess(filename, out data, 0, out uncertain);
+
+			if (uncertain || noicons.Exists(s => s == ctype))
+				return fileIcon;
+
+			if (mimeicons.ContainsKey(ctype))
+				return mimeicons[ctype];
+
+			IconInfo info = IconTheme.Default.LookupIcon(GLib.ContentType.GetIcon(ctype), 48, IconLookupFlags.UseBuiltin);
+			Gdk.Pixbuf pixbuf;
+			try
+			{
+				pixbuf = info.LoadIcon();
+			}
+			catch (Exception)
+			{
+				pixbuf = null;
+			}
+
+			if (pixbuf == null)
+				return fileIcon;
+
+			mimeicons.Add(ctype, pixbuf);
+			return pixbuf;
 		}
 
 		Entry addr;
@@ -160,6 +205,8 @@ namespace ImageViewer
 		IconView view;
 		Gdk.Pixbuf icon, fileIcon;
 		Statusbar statusbar;
+		Dictionary<string, Gdk.Pixbuf> mimeicons;
+		List<string> noicons;
 	}
 }
 
