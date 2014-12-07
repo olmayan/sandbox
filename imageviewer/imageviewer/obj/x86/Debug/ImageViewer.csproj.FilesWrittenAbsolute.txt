@@ -1,0 +1,5 @@
+/home/nonexyst/dev/imageviewer/imageviewer/obj/x86/Debug/.NETFramework,Version=v4.5.AssemblyAttribute.cs
+/home/nonexyst/dev/imageviewer/imageviewer/bin/Debug/imageviewer.exe.mdb
+/home/nonexyst/dev/imageviewer/imageviewer/bin/Debug/imageviewer.exe
+/home/nonexyst/dev/imageviewer/imageviewer/obj/x86/Debug/imageviewer.exe
+/home/nonexyst/dev/imageviewer/imageviewer/obj/x86/Debug/imageviewer.exe.mdb
