@@ -15,7 +15,6 @@ namespace ImageViewer
 
 			addr = new Entry();
 			addr.KeyReleaseEvent += delegate(object o, KeyReleaseEventArgs args) {
-				Console.WriteLine(args.Event.Key.ToString());
 				if (args.Event.Key == Gdk.Key.Return)
 				{
 					LoadFolder(addr.Text, addr);
@@ -101,6 +100,7 @@ namespace ImageViewer
 			fileIcon = RenderIconPixbuf(Stock.File, IconSize.Dialog);
 			mimeicons = new Dictionary<string, Gdk.Pixbuf>();
 			noicons = new List<string>();
+			bkgproc = null;
 
 			box.FocusChain = new Widget[] { scrolled, addr };
 
@@ -110,8 +110,6 @@ namespace ImageViewer
 				? Environment.GetEnvironmentVariable("HOME")
 				: Environment.GetEnvironmentVariable("HOMEDRIVE") + Environment.GetEnvironmentVariable("HOMEPATH");
 			LoadFolder(path);
-
-			Console.WriteLine(GLib.ContentType.GetIcon("text/plain").ToString());
 		}
 
 		public void LoadFolder(string pathname, Widget focus = null)
@@ -122,43 +120,64 @@ namespace ImageViewer
 
 			Thread thread = new Thread(new ThreadStart(delegate {
 				DirectoryInfo dir = (pathname == string.Empty) ? null : new DirectoryInfo(pathname);
+
+				List<DirectoryInfo> dirInfos;
+				List<FileInfo> fileInfos = null;
+
+				ManualResetEvent e = new ManualResetEvent(false);
+
 				if (dir == null || !dir.Exists)
 				{
 					Application.Invoke(delegate {
 						MessageDialog dlg = new MessageDialog(this, DialogFlags.Modal, MessageType.Warning, ButtonsType.Ok, "Directory does not exist!");
 						dlg.Run();
 						dlg.Destroy();
+						e.Set();
 					} );
+					e.WaitOne();
 				}
 				else
 				{
-					List<DirectoryInfo> dirInfos = Directory.GetDirectories(pathname).ToList()
+					dirInfos = Directory.GetDirectories(pathname).ToList()
 						.Select(s => new DirectoryInfo(s)).Where(di => (di.Attributes & FileAttributes.Hidden) == 0).ToList();
 					List<object[]> items = dirInfos.Select(di => new object[] { 
 						di.Name,
 						icon,
 						new ItemData(di) } ).ToList();
 
-					List<FileInfo> fileInfos = Directory.GetFiles(pathname).ToList()
+					fileInfos = Directory.GetFiles(pathname).ToList()
 						.Select(s => new FileInfo(s)).Where(fi => (fi.Attributes & FileAttributes.Hidden) == 0).ToList();
 					items.AddRange(fileInfos.Select(fi => new object[] { 
 						fi.Name,
-						GetMimeIcon(fi.FullName),
+						fileIcon,//GetMimeIcon(fi.FullName),
 						new ItemData(fi) } ).ToList());
-						
-					Application.Invoke(delegate { list.Clear();	} );
-					foreach (object[] values in items)
-						Application.Invoke(delegate { list.AppendValues(values); } );
 
+					e.Reset();
+					Application.Invoke(delegate { 
+						list.Clear();
+						foreach (object[] values in items)
+							list.AppendValues(values);
+						addr.Text = pathname;
+						e.Set();
+					} );
+					e.WaitOne();
 					curdir = dir;
-					Application.Invoke(delegate { addr.Text = pathname; } );
 				}
 
+				e.Reset();
 				Application.Invoke(delegate {
 					addr.Sensitive = view.Sensitive = true;
 					((focus == null) ? view : focus).GrabFocus();
 					if (focus == addr) addr.SelectRegion(selStart, selEnd);
+					e.Set();
 				} );
+				e.WaitOne();
+
+				if (fileInfos != null && fileInfos.Count > 0)
+				{
+					bkgproc = new Thread(new ThreadStart(delegate { LoadMimeIcons(); } ));
+					bkgproc.Start();
+				}
 			} ));
 
 			thread.Start();
@@ -166,6 +185,43 @@ namespace ImageViewer
 
 		void LoadMimeIcons()
 		{
+			List<Tuple<TreePath, string>> files = new List<Tuple<TreePath, string>>();
+			//Dictionary<TreePath, string> files = new Dictionary<TreePath, string>();
+
+			TreeIter iter;
+			ManualResetEvent e = new ManualResetEvent(false);
+			Application.Invoke(delegate {
+				Console.WriteLine(list.GetIterFirst(out iter));
+				if (list.GetIterFirst(out iter))
+				{
+					do
+					{
+						ItemData data = (ItemData)list.GetValue(iter, 2);
+						if (data.IsFile)
+							files.Add(new Tuple<TreePath, string>(list.GetPath(iter), data.FullName));
+					} while (list.IterNext(ref iter));
+				}
+				e.Set();
+			} );
+			e.WaitOne();
+
+			Console.WriteLine(files.Count.ToString());
+
+			files.ForEach( p => {
+				Gdk.Pixbuf pixbuf = GetMimeIcon(p.Item2);
+				if (pixbuf != fileIcon)
+				{
+					e.Reset();
+					Application.Invoke(delegate {
+						list.GetIter(out iter, p.Item1);
+						list.SetValue(iter, 1, pixbuf);
+						e.Set();
+					} );
+					e.WaitOne();
+				}
+			} );
+
+			Console.WriteLine("All mime icons loaded.");
 		}
 
 		Gdk.Pixbuf GetMimeIcon(string filename)
@@ -207,6 +263,7 @@ namespace ImageViewer
 		Statusbar statusbar;
 		Dictionary<string, Gdk.Pixbuf> mimeicons;
 		List<string> noicons;
+		Thread bkgproc;
 	}
 }
 
