@@ -2,7 +2,7 @@
   <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug|x86" />
   <MonoDevelop.Ide.Workbench ActiveDocument="imageviewer/MainWindow.cs">
     <Files>
-      <File FileName="imageviewer/MainWindow.cs" Line="12" Column="12" />
+      <File FileName="imageviewer/MainWindow.cs" Line="20" Column="20" />
       <File FileName="imageviewer/main.cs" Line="1" Column="1" />
     </Files>
   </MonoDevelop.Ide.Workbench>
