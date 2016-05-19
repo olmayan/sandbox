@@ -7,7 +7,9 @@
 module Main where
 
 import Control.Monad
+import Control.Monad.Trans (liftIO) -- Maybe delete in the Future
 import Data.Maybe
+import Data.IORef
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.General.IconTheme
 import Graphics.UI.Gtk.ModelView
@@ -28,6 +30,33 @@ data FMInfo = FMInfo {
     fTime :: ClockTime             -- modified time
 }
 
+data SortMode = 
+    SortByName |
+    SortByType |
+    SortBySize |
+    SortByDate 
+
+icon :: FMInfo -> Pixbuf
+icon FMInfo { fIcon = i } = i
+
+name :: FMInfo -> String
+name FMInfo { fName = n } = n
+
+desc :: FMInfo -> String
+desc FMInfo { fDesc = d } = d
+
+size :: FMInfo -> Integer
+size FMInfo { fSize = s } = s
+
+time :: FMInfo -> ClockTime
+time FMInfo { fTime = t } = t
+
+compareFMInfos :: FMInfo -> FMInfo -> Ordering
+compareFMInfos a b
+    | (desc a) == "folder" = if (desc b) == "folder" then compare (name a) (name b) else LT
+    | (desc b) == "folder" = GT
+    | otherwise = compare (name a) (name b)
+
 -- | Main.
 main :: IO ()
 main = do
@@ -41,14 +70,28 @@ main = do
     scrolledWindow <- scrolledWindowNew Nothing Nothing
     window `containerAdd` scrolledWindow
 
-    -- Get file infos under specify directory.
-    fInfos <- directoryGetFMInfos "/"
+    -- Get file infos under specific directory.
+    curPath <- newIORef "/"
+    path <- readIORef curPath
+    fInfos <- directoryGetFMInfos path
+
+    -- Initialize model for the tree view.
+    rawModel <- listStoreNew fInfos
+    model <- treeModelSortNewWithModel rawModel
+    
+    -- Set sort functions for the model.
+    let nameFunc = \iter1 iter2 -> do
+        a <- treeModelGetRow rawModel iter1
+        b <- treeModelGetRow rawModel iter2
+        return $ compareFMInfos a b
+        
+    treeSortableSetDefaultSortFunc model $ Just nameFunc
+    treeSortableSetSortFunc model 2 nameFunc 
 
     -- Initialize tree view.
-    store <- listStoreNew fInfos
-    tv <- treeViewNewWithModel store
-    tv `set` [ treeViewHeadersClickable := True
-             , treeViewReorderable := True ]
+    tv <- treeViewNewWithModel model
+    --tv `set` [ treeViewHeadersClickable := True
+    --         , treeViewReorderable := True ]
     scrolledWindow `containerAdd` tv
 
     -- List Icons.
@@ -57,25 +100,31 @@ main = do
             , treeViewColumnResizable := True ]
     tv `treeViewAppendColumn` tvc
 
-    icon <- cellRendererPixbufNew
-    treeViewColumnPackStart tvc icon True
-    cellLayoutSetAttributes tvc icon store $ \FMInfo { fIcon = icon } ->
-        [ cellPixbuf := icon ]
+    rend <- cellRendererPixbufNew
+    cellLayoutPackStart tvc rend True
+    treeViewColumnPackStart tvc rend True
+    cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
+        cIter <- treeModelSortConvertIterToChildIter model iter
+        fInfo <- treeModelGetRow rawModel cIter
+        rend `set` [ cellPixbuf := (icon fInfo) ]
 
     -- List Name.
     tvc <- treeViewColumnNew
     set tvc [ treeViewColumnTitle := "Name"
-            , treeViewColumnResizable := True
-            , treeViewColumnClickable := True
-            , treeViewColumnSortIndicator := True
-            , treeViewColumnReorderable := True
-            , treeViewColumnSortOrder := SortAscending ]
+            , treeViewColumnResizable := True ]
+            --, treeViewColumnClickable := True
+            --, treeViewColumnSortIndicator := True
+            --, treeViewColumnReorderable := True
+            --, treeViewColumnSortOrder := SortAscending ]
     tv `treeViewAppendColumn` tvc
 
-    name <- cellRendererTextNew
-    treeViewColumnPackStart tvc name True
-    cellLayoutSetAttributes tvc name store $ \FMInfo { fName = name } ->
-        [ cellText := name ]
+    rend <- cellRendererTextNew
+    treeViewColumnPackStart tvc rend True
+    cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
+        cIter <- treeModelSortConvertIterToChildIter model iter
+        fInfo <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := (name fInfo) ]
+    tvc `treeViewColumnSetSortColumnId` 2
 
     -- List file mime description.
     tvc <- treeViewColumnNew
@@ -83,22 +132,26 @@ main = do
             , treeViewColumnResizable := True ]
     tv `treeViewAppendColumn` tvc
 
-    desc <- cellRendererTextNew
-    treeViewColumnPackStart tvc desc True
-    cellLayoutSetAttributes tvc desc store $ \FMInfo { fDesc = desc } ->
-        [ cellText := desc ]
+    rend <- cellRendererTextNew
+    treeViewColumnPackStart tvc rend True
+    cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
+        cIter <- treeModelSortConvertIterToChildIter model iter
+        fInfo <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := (desc fInfo) ]
 
-  -- List file size.
+    -- List file size.
     tvc <- treeViewColumnNew
     set tvc [ treeViewColumnTitle := "Size"
             , treeViewColumnResizable := True ]
     tv `treeViewAppendColumn` tvc
 
-    size <- cellRendererTextNew
-    treeViewColumnPackStart tvc size True
-    cellLayoutSetAttributes tvc size store $ \FMInfo { fSize = size } ->
-        [ cellText := formatFileSizeForDisplay size
-        , cellXAlign := 1.0]
+    rend <- cellRendererTextNew
+    rend `set` [ cellXAlign := 1.0 ]
+    treeViewColumnPackStart tvc rend True
+    cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
+        cIter <- treeModelSortConvertIterToChildIter model iter
+        fInfo <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := (formatFileSizeForDisplay $ size fInfo) ]
 
     -- List modified time.
     tvc <- treeViewColumnNew
@@ -106,43 +159,28 @@ main = do
             , treeViewColumnResizable := True ]
     tv `treeViewAppendColumn` tvc
 
-    time <- cellRendererTextNew
-    treeViewColumnPackStart tvc time True
-    cellLayoutSetAttributes tvc time store $ \FMInfo { fTime = time } ->
-        [ cellText :=> do
-            calTime <- toCalendarTime time
-            return (formatCalendarTime L.defaultTimeLocale "%Y/%m/%d %T" calTime)]
-    
-    columns <- treeViewGetColumns tv
-    mapM_ (\col -> do
-        --(Just colname) <- col `get` treeViewColumnTitle
-        --putStrLn colname
-        --set col [ treeViewColumnClickable := True
-        --        , treeViewColumnSortIndicator := True ]
-        col `set` [ treeViewColumnClickable := True ]
-               
-        col `onColClicked` ((\col -> do 
-            (Just colname) <- col `get` treeViewColumnTitle
-            putStrLn colname
-            colIndicator <- col `get` treeViewColumnSortIndicator
-            if colIndicator
-                then do
-                    order <- col `get` treeViewColumnSortOrder
-                    col `set` [ treeViewColumnSortOrder := (if order == SortAscending then SortDescending else SortAscending)]
-                else do
-                    mapM_ (\col -> do
-                        col `set` [ treeViewColumnSortIndicator := False ]
-                        ) columns
-                    col `set` [ treeViewColumnSortIndicator := True ]
-            --treeViewColumnSetSortColumnId
-            ) col)
-        ) columns
+    rend <- cellRendererTextNew
+    treeViewColumnPackStart tvc rend True
+    cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
+        cIter <- treeModelSortConvertIterToChildIter model iter
+        fInfo <- treeModelGetRow rawModel cIter
+        calTime <- toCalendarTime $ time fInfo
+        rend `set` [ cellText := (formatCalendarTime L.defaultTimeLocale "%Y/%m/%d %T" calTime) ]
+
+    -- TreeView Item DoubleClick.
+    tv `onRowActivated` (\path col -> do
+        putStrLn $ show path
+        )
 
     -- Show window.
     window `onDestroy` mainQuit
     widgetShowAll window
 
     mainGUI
+
+rowActivated :: TreeViewClass self => self -> TreePath -> TreeViewColumn -> IO()
+rowActivated self path col = do
+    putStrLn $ show path
 
 printColName col = do
     (Just colname) <- col `get` treeViewColumnTitle
