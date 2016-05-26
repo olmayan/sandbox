@@ -8,14 +8,21 @@ module Main where
 
 import Control.Monad
 import Control.Monad.Trans (liftIO) -- Maybe delete in the Future
+--import Data.CaseInsensitive (CI)
+import Data.Char (toLower)
 import Data.Maybe
 import Data.IORef
+import Data.List (intersect)
 import Graphics.UI.Gtk
+import Graphics.UI.Gtk.Gdk.Events (Event(Key))
 import Graphics.UI.Gtk.General.IconTheme
 import Graphics.UI.Gtk.ModelView
+import System.FilePath.Posix
+import System.Directory
 import System.GIO
 import System.Glib.GDateTime
 import System.Glib.GError
+import System.Glib.UTFString
 import qualified System.Locale as L
 import System.Time -- should be replaced with Data.Time
 import Text.Printf
@@ -30,11 +37,11 @@ data FMInfo = FMInfo {
     fTime :: ClockTime             -- modified time
 }
 
-data SortMode = 
+data Sorting =
     SortByName |
     SortByType |
     SortBySize |
-    SortByDate 
+    SortByDate deriving (Eq, Ord, Enum, Show)
 
 icon :: FMInfo -> Pixbuf
 icon FMInfo { fIcon = i } = i
@@ -51,11 +58,34 @@ size FMInfo { fSize = s } = s
 time :: FMInfo -> ClockTime
 time FMInfo { fTime = t } = t
 
-compareFMInfos :: FMInfo -> FMInfo -> Ordering
-compareFMInfos a b
-    | (desc a) == "folder" = if (desc b) == "folder" then compare (name a) (name b) else LT
+dumpFMInfo :: FMInfo -> String
+dumpFMInfo FMInfo { fName = n
+                  , fDesc = d
+                  , fSize = s
+                  , fTime = t } = printf f n d s $ show t where
+    f = "FMInfo { fName = \"%s\", fDesc = \"%s\", fSize = %d, fTime = %s }"
+
+compareFMInfos :: FMInfo -> FMInfo -> Sorting -> Ordering
+compareFMInfos a b sorting
+    | (desc a) == "folder" = if (desc b) == "folder"
+                                then (if sorting == SortByDate
+                                    then compare (time a) (time b)
+                                    else compareCI (name a) (name b))
+                                else LT
     | (desc b) == "folder" = GT
-    | otherwise = compare (name a) (name b)
+    | otherwise = case sorting of
+                       SortByName -> compare (name a) (name b)
+                       SortByType ->
+                            let cmp = compareCI (desc a) (desc b)
+                            in
+                            if cmp == EQ
+                                then compareCI (name a) (name b)
+                                else cmp
+                       SortBySize -> compare (size a) (size b)
+                       SortByDate -> compare (time a) (time b)
+
+compareCI :: String -> String -> Ordering
+compareCI a b = compare (map toLower a) (map toLower b)
 
 -- | Main.
 main :: IO ()
@@ -68,40 +98,95 @@ main = do
     windowSetDefaultSize window 900 600
     windowSetPosition window WinPosCenter
     scrolledWindow <- scrolledWindowNew Nothing Nothing
-    window `containerAdd` scrolledWindow
+    entryAddr <- entryNew
+    vbox <- vBoxNew False 0
+    hbox <- hBoxNew False 0
+    window `containerAdd` vbox
 
     -- Get file infos under specific directory.
-    curPath <- newIORef "/"
-    path <- readIORef curPath
-    fInfos <- directoryGetFMInfos path
+    curPath <- newIORef (""::FilePath)
 
     -- Initialize model for the tree view.
-    rawModel <- listStoreNew fInfos
+    rawModel <- listStoreNew ([]::[FMInfo])
     model <- treeModelSortNewWithModel rawModel
-    
+
     -- Set sort functions for the model.
-    let nameFunc = \iter1 iter2 -> do
+    let sortFunc = \iter1 iter2 sorting -> do
         a <- treeModelGetRow rawModel iter1
         b <- treeModelGetRow rawModel iter2
-        return $ compareFMInfos a b
-        
-    treeSortableSetDefaultSortFunc model $ Just nameFunc
-    treeSortableSetSortFunc model 2 nameFunc 
+        return $ compareFMInfos a b sorting
+
+    --treeSortableSetDefaultSortFunc model $ Just $ \iter1 iter2 -> sortFunc iter1 iter2 SortByName
+    treeSortableSetSortFunc model 2 $ \iter1 iter2 -> sortFunc iter1 iter2 SortByName
+    treeSortableSetSortFunc model 3 $ \iter1 iter2 -> sortFunc iter1 iter2 SortByType
+    treeSortableSetSortFunc model 4 $ \iter1 iter2 -> sortFunc iter1 iter2 SortBySize
+    treeSortableSetSortFunc model 5 $ \iter1 iter2 -> sortFunc iter1 iter2 SortByDate
+
+    -- Set initial sorting.
+    treeSortableSetSortColumnId model 2 SortAscending
+
+    -- Create the action group.
+    agr <- actionGroupNew "AGR"
+    
+    -- Building the Go menu.
+    aGo <- actionNew "GO" "_Go" Nothing Nothing
+    
+    aGoUp <- actionNew "GOUP" "_Up" Nothing $ Just stockGoUp
+    aGoUp `onActionActivate` (goUp curPath rawModel entryAddr)
+    
+    aGoBack <- actionNew "GOBACK" "_Back" Nothing $ Just stockGoBack
+
+    aGoForward <- actionNew "GOFORWARD" "_Forward" Nothing $ Just stockGoForward
+
+    aGoHome <- actionNew "GOHOME" "_Home folder" Nothing $ Just stockHome
+
+    actionGroupAddAction agr aGo
+    actionGroupAddAction agr aGoUp
+    actionGroupAddAction agr aGoBack
+    actionGroupAddAction agr aGoForward
+    actionGroupAddAction agr aGoHome
+
+    -- Initialize the menu bar.
+    ui <- uiManagerNew
+    ui `uiManagerAddUiFromString` uiDecl
+    uiManagerInsertActionGroup ui agr 0
+    
+    -- Take the menu from the UI manager.
+    (Just menubar) <- ui `uiManagerGetWidget` "/ui/menubar"
+    boxPackStart vbox menubar PackNatural 0
+    
+    -- Take the toolbar from the UI manager.
+    (Just toolbar) <- ui `uiManagerGetWidget` "/ui/toolbar"
+    boxPackStart vbox toolbar PackNatural 0
+    
+    -- Creating the address string
+    toolItem <- toolItemNew
+    toolItem `set` [ toolItemExpand := True ]
+    toolItem `containerAdd` entryAddr
+    onKeyPress entryAddr $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
+        when (mods `intersect` [Control, Alt, Shift] == [] && glibToString keyName == "Return") $ do
+            newPath <- entryAddr `get` entryText
+            when (newPath /= "") $ walkPath newPath curPath rawModel entryAddr
+        return False
+    toolbarInsert (castToToolbar toolbar) toolItem (-1)
 
     -- Initialize tree view.
     tv <- treeViewNewWithModel model
-    --tv `set` [ treeViewHeadersClickable := True
-    --         , treeViewReorderable := True ]
+    tv `set` [ treeViewEnableSearch := True]
     scrolledWindow `containerAdd` tv
+    boxPackStart vbox scrolledWindow PackGrow 0
+    onKeyPress tv $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
+        putStrLn $ glibToString keyName
+        when (elem mods [[], [Alt2]] && glibToString keyName == "BackSpace") $ goUp curPath rawModel entryAddr
+        return True
 
     -- List Icons.
     tvc <- treeViewColumnNew
-    set tvc [ treeViewColumnTitle := "Icon"
-            , treeViewColumnResizable := True ]
+    tvc `set` [ treeViewColumnTitle := "Icon"
+              , treeViewColumnResizable := True ]
     tv `treeViewAppendColumn` tvc
 
     rend <- cellRendererPixbufNew
-    cellLayoutPackStart tvc rend True
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
@@ -112,10 +197,6 @@ main = do
     tvc <- treeViewColumnNew
     set tvc [ treeViewColumnTitle := "Name"
             , treeViewColumnResizable := True ]
-            --, treeViewColumnClickable := True
-            --, treeViewColumnSortIndicator := True
-            --, treeViewColumnReorderable := True
-            --, treeViewColumnSortOrder := SortAscending ]
     tv `treeViewAppendColumn` tvc
 
     rend <- cellRendererTextNew
@@ -138,6 +219,7 @@ main = do
         cIter <- treeModelSortConvertIterToChildIter model iter
         fInfo <- treeModelGetRow rawModel cIter
         rend `set` [ cellText := (desc fInfo) ]
+    tvc `treeViewColumnSetSortColumnId` 3
 
     -- List file size.
     tvc <- treeViewColumnNew
@@ -152,6 +234,7 @@ main = do
         cIter <- treeModelSortConvertIterToChildIter model iter
         fInfo <- treeModelGetRow rawModel cIter
         rend `set` [ cellText := (formatFileSizeForDisplay $ size fInfo) ]
+    tvc `treeViewColumnSetSortColumnId` 4
 
     -- List modified time.
     tvc <- treeViewColumnNew
@@ -166,11 +249,14 @@ main = do
         fInfo <- treeModelGetRow rawModel cIter
         calTime <- toCalendarTime $ time fInfo
         rend `set` [ cellText := (formatCalendarTime L.defaultTimeLocale "%Y/%m/%d %T" calTime) ]
+    tvc `treeViewColumnSetSortColumnId` 5
 
     -- TreeView Item DoubleClick.
-    tv `onRowActivated` (\path col -> do
-        putStrLn $ show path
-        )
+    tv `onRowActivated` (\path col -> Main.rowActivated path col curPath model rawModel entryAddr)
+
+    -- Walking to the default path.
+    appPath <- getCurrentDirectory
+    walkPath appPath curPath rawModel entryAddr
 
     -- Show window.
     window `onDestroy` mainQuit
@@ -178,13 +264,77 @@ main = do
 
     mainGUI
 
-rowActivated :: TreeViewClass self => self -> TreePath -> TreeViewColumn -> IO()
-rowActivated self path col = do
-    putStrLn $ show path
+uiDecl :: String
+uiDecl = "<ui>\
+\           <menubar>\
+\             <menu action=\"GO\">\
+\               <menuitem action=\"GOUP\" />\
+\               <menuitem action=\"GOBACK\" />\
+\               <menuitem action=\"GOFORWARD\" />\
+\               <menuitem action=\"GOHOME\" />\
+\             </menu>\
+\           </menubar>\
+\           <toolbar>\
+\             <toolitem action=\"GOUP\" />\
+\             <toolitem action=\"GOBACK\" />\
+\             <toolitem action=\"GOFORWARD\" />\
+\             <toolitem action=\"GOHOME\" />\
+\           </toolbar>\
+\         </ui>"
 
-printColName col = do
-    (Just colname) <- col `get` treeViewColumnTitle
-    putStrLn colname
+goUp :: IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
+goUp curPath rawModel entryAddr = do
+    path <- readIORef curPath
+    when (not $ isDrive path) $ do
+        walkPath (takeDirectory $ dropTrailingPathSeparator path) curPath rawModel entryAddr
+
+rowActivated :: TreePath
+             -> TreeViewColumn
+             -> IORef String
+             -> TypedTreeModelSort FMInfo
+             -> ListStore FMInfo
+             -> Entry
+             -> IO()
+rowActivated path col curPath model rawModel entryAddr = do
+    (Just iter) <- treeModelGetIter model path
+    cIter <- treeModelSortConvertIterToChildIter model iter
+    fInfo <- treeModelGetRow rawModel cIter
+    when (desc fInfo == "folder") $ do
+        path <- readIORef curPath
+        let newPath = (path) `combine` (name fInfo)
+        putStrLn newPath
+        walkPath newPath curPath rawModel entryAddr
+    putStrLn $ dumpFMInfo fInfo
+    
+walkPath :: FilePath -> IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
+walkPath newPath curPath rawModel entryAddr = do
+    cPath <- readIORef curPath
+    let newPath' = addTrailingPathSeparator (if isRelative newPath'' then cPath `combine` newPath'' else newPath'') where 
+        newPath'' = normalise newPath
+    exists <- doesDirectoryExist newPath'
+    readable <- if exists then do
+        permissions <- getPermissions newPath'
+        return $ readable permissions
+                          else return False
+    if exists && readable then do
+        writeIORef curPath newPath'
+        fInfos <- directoryGetFMInfos newPath'
+        listStoreClear rawModel
+        mapM_ (rawModel `listStoreAppend`) fInfos
+        entryAddr `set` [ entryText := newPath' ]
+        let pos = length newPath'
+        editableSelectRegion entryAddr pos pos
+    else do
+        parent <- widgetGetToplevel entryAddr
+        dialog <- messageDialogNew
+            (Just $ castToWindow parent)
+            [DialogModal, DialogDestroyWithParent]
+            MessageError
+            ButtonsOk
+            (if exists then "No permission to read the directory." else "Directory does not exist.")
+
+        dialogRun dialog
+        widgetDestroy dialog
 
 directoryGetFMInfos :: FilePath -> IO [FMInfo]
 directoryGetFMInfos directory = do
