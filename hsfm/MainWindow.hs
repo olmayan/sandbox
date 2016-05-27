@@ -1,98 +1,26 @@
--- | File Manager demo.
---  Author      :  Andy Stewart
---  Copyright   :  (c) 2010 Andy Stewart <lazycat.manatee@gmail.com>
+module MainWindow (mainWindowNew) where
 
--- | This simple file-manager base on gio.
---
-module Main where
+import Files
 
 import Control.Monad
 import Control.Monad.Trans (liftIO) -- Maybe delete in the Future
---import Data.CaseInsensitive (CI)
-import Data.Char (toLower)
-import Data.Maybe
 import Data.IORef
 import Data.List (intersect)
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Gdk.Events (Event(Key))
-import Graphics.UI.Gtk.General.IconTheme
-import Graphics.UI.Gtk.ModelView
+--import Graphics.UI.Gtk.General.IconTheme
+--import Graphics.UI.Gtk.ModelView
 import System.FilePath.Posix
 import System.Directory
-import System.GIO
-import System.Glib.GDateTime
-import System.Glib.GError
+--import System.Glib.GDateTime
+--import System.Glib.GError
 import System.Glib.UTFString
-import qualified System.Locale as L
 import System.Time -- should be replaced with Data.Time
-import Text.Printf
-
-import qualified Data.ByteString.UTF8 as UTF8
-
-data FMInfo = FMInfo {
-    fIcon :: Pixbuf,               -- icon
-    fName :: String,               -- file name
-    fDesc :: String,               -- mime type description
-    fSize :: Integer,              -- file size
-    fTime :: ClockTime             -- modified time
-}
-
-data Sorting =
-    SortByName |
-    SortByType |
-    SortBySize |
-    SortByDate deriving (Eq, Ord, Enum, Show)
-
-icon :: FMInfo -> Pixbuf
-icon FMInfo { fIcon = i } = i
-
-name :: FMInfo -> String
-name FMInfo { fName = n } = n
-
-desc :: FMInfo -> String
-desc FMInfo { fDesc = d } = d
-
-size :: FMInfo -> Integer
-size FMInfo { fSize = s } = s
-
-time :: FMInfo -> ClockTime
-time FMInfo { fTime = t } = t
-
-dumpFMInfo :: FMInfo -> String
-dumpFMInfo FMInfo { fName = n
-                  , fDesc = d
-                  , fSize = s
-                  , fTime = t } = printf f n d s $ show t where
-    f = "FMInfo { fName = \"%s\", fDesc = \"%s\", fSize = %d, fTime = %s }"
-
-compareFMInfos :: FMInfo -> FMInfo -> Sorting -> Ordering
-compareFMInfos a b sorting
-    | (desc a) == "folder" = if (desc b) == "folder"
-                                then (if sorting == SortByDate
-                                    then compare (time a) (time b)
-                                    else compareCI (name a) (name b))
-                                else LT
-    | (desc b) == "folder" = GT
-    | otherwise = case sorting of
-                       SortByName -> compare (name a) (name b)
-                       SortByType ->
-                            let cmp = compareCI (desc a) (desc b)
-                            in
-                            if cmp == EQ
-                                then compareCI (name a) (name b)
-                                else cmp
-                       SortBySize -> compare (size a) (size b)
-                       SortByDate -> compare (time a) (time b)
-
-compareCI :: String -> String -> Ordering
-compareCI a b = compare (map toLower a) (map toLower b)
+import qualified System.Locale as L
 
 -- | Main.
-main :: IO ()
-main = do
-    -- Init.
-    initGUI
-
+mainWindowNew :: IO Window
+mainWindowNew = do
     -- Create window.
     window <- windowNew
     windowSetDefaultSize window 900 600
@@ -139,6 +67,7 @@ main = do
     aGoForward <- actionNew "GOFORWARD" "_Forward" Nothing $ Just stockGoForward
 
     aGoHome <- actionNew "GOHOME" "_Home folder" Nothing $ Just stockHome
+    aGoHome `onActionActivate` (goHome curPath rawModel entryAddr)
 
     actionGroupAddAction agr aGo
     actionGroupAddAction agr aGoUp
@@ -176,7 +105,7 @@ main = do
     scrolledWindow `containerAdd` tv
     boxPackStart vbox scrolledWindow PackGrow 0
     onKeyPress tv $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
-        putStrLn $ glibToString keyName
+        --putStrLn $ glibToString keyName
         when (elem mods [[], [Alt2]] && glibToString keyName == "BackSpace") $ goUp curPath rawModel entryAddr
         return True
 
@@ -190,8 +119,8 @@ main = do
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
-        fInfo <- treeModelGetRow rawModel cIter
-        rend `set` [ cellPixbuf := (icon fInfo) ]
+        FMInfo { fIcon = icon } <- treeModelGetRow rawModel cIter
+        rend `set` [ cellPixbuf := icon ]
 
     -- List Name.
     tvc <- treeViewColumnNew
@@ -203,8 +132,8 @@ main = do
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
-        fInfo <- treeModelGetRow rawModel cIter
-        rend `set` [ cellText := (name fInfo) ]
+        FMInfo { fName = name } <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := name ]
     tvc `treeViewColumnSetSortColumnId` 2
 
     -- List file mime description.
@@ -217,8 +146,8 @@ main = do
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
-        fInfo <- treeModelGetRow rawModel cIter
-        rend `set` [ cellText := (desc fInfo) ]
+        FMInfo { fDesc = desc } <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := desc ]
     tvc `treeViewColumnSetSortColumnId` 3
 
     -- List file size.
@@ -232,8 +161,8 @@ main = do
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
-        fInfo <- treeModelGetRow rawModel cIter
-        rend `set` [ cellText := (formatFileSizeForDisplay $ size fInfo) ]
+        FMInfo { fSize = size } <- treeModelGetRow rawModel cIter
+        rend `set` [ cellText := formatFileSizeForDisplay size ]
     tvc `treeViewColumnSetSortColumnId` 4
 
     -- List modified time.
@@ -246,23 +175,22 @@ main = do
     treeViewColumnPackStart tvc rend True
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
-        fInfo <- treeModelGetRow rawModel cIter
-        calTime <- toCalendarTime $ time fInfo
+        FMInfo { fTime = time } <- treeModelGetRow rawModel cIter
+        calTime <- toCalendarTime time
         rend `set` [ cellText := (formatCalendarTime L.defaultTimeLocale "%Y/%m/%d %T" calTime) ]
     tvc `treeViewColumnSetSortColumnId` 5
 
     -- TreeView Item DoubleClick.
-    tv `onRowActivated` (\path col -> Main.rowActivated path col curPath model rawModel entryAddr)
+    tv `onRowActivated` (\path col -> MainWindow.rowActivated path col curPath model rawModel entryAddr)
 
     -- Walking to the default path.
-    appPath <- getCurrentDirectory
-    walkPath appPath curPath rawModel entryAddr
+    homePath <- getHomeDirectory
+    walkPath homePath curPath rawModel entryAddr
 
-    -- Show window.
+    -- On destroy quit program.
     window `onDestroy` mainQuit
-    widgetShowAll window
 
-    mainGUI
+    return window
 
 uiDecl :: String
 uiDecl = "<ui>\
@@ -288,21 +216,26 @@ goUp curPath rawModel entryAddr = do
     when (not $ isDrive path) $ do
         walkPath (takeDirectory $ dropTrailingPathSeparator path) curPath rawModel entryAddr
 
+goHome :: IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
+goHome curPath rawModel entryAddr = do
+    homePath <- getHomeDirectory
+    walkPath homePath curPath rawModel entryAddr
+
 rowActivated :: TreePath
              -> TreeViewColumn
              -> IORef String
              -> TypedTreeModelSort FMInfo
              -> ListStore FMInfo
              -> Entry
-             -> IO()
+             -> IO ()
 rowActivated path col curPath model rawModel entryAddr = do
     (Just iter) <- treeModelGetIter model path
     cIter <- treeModelSortConvertIterToChildIter model iter
-    fInfo <- treeModelGetRow rawModel cIter
-    when (desc fInfo == "folder") $ do
+    fInfo@FMInfo { fName = name
+                 , fDesc = desc } <- treeModelGetRow rawModel cIter
+    when (desc == "folder") $ do
         path <- readIORef curPath
-        let newPath = (path) `combine` (name fInfo)
-        putStrLn newPath
+        let newPath = path `combine` name
         walkPath newPath curPath rawModel entryAddr
     putStrLn $ dumpFMInfo fInfo
     
@@ -335,68 +268,3 @@ walkPath newPath curPath rawModel entryAddr = do
 
         dialogRun dialog
         widgetDestroy dialog
-
-directoryGetFMInfos :: FilePath -> IO [FMInfo]
-directoryGetFMInfos directory = do
-    infos <- directoryGetFileInfos directory
-    fInfos <- mapM (\info -> do
-        -- Get Icon.
-        icon <- fileInfoGetIcon info
-        iconTheme <- iconThemeGetDefault
-        iconInfo <- iconThemeLookupByGIcon iconTheme icon 24 IconLookupUseBuiltin
-        pixbuf <- case iconInfo of
-                    Just ii -> iconInfoLoadIcon ii
-                    Nothing -> liftM fromJust $ iconThemeLoadIcon iconTheme "unknown" 24 IconLookupUseBuiltin
-
-        let
-            -- Get file name.
-            name = fromJust $ fileInfoGetName info
-            -- File size.
-            size = toInteger $ fileInfoGetSize info
-            -- File modified time.
-            time = gTimeValToClockTime $ fileInfoGetModificationTime info
-            -- File mime description.
-            Just contentType = fileInfoGetContentType info
-            desc = contentTypeGetDescription contentType
-
-        return $ FMInfo pixbuf (UTF8.toString name) desc size time
-        ) infos
-    return fInfos
-
-directoryGetFileInfos :: FilePath -> IO [FileInfo]
-directoryGetFileInfos directory = do
-    let dir = fileFromPath (UTF8.fromString directory)
-    enumerator <- fileEnumerateChildren dir "*" [] Nothing
-    fileEnumeratorGetFileInfos enumerator
-
-fileEnumeratorGetFileInfos :: FileEnumeratorClass enumerator => enumerator -> IO [FileInfo]
-fileEnumeratorGetFileInfos enum = do
-    fileInfo <- fileEnumeratorNextFile enum Nothing
-    case fileInfo of
-         Just info -> do
-             infos <- fileEnumeratorGetFileInfos enum
-             return $ info : infos
-         Nothing -> return []
-
-formatFileSizeForDisplay :: Integer -> String
-formatFileSizeForDisplay size
-    | size < 2 ^ 10  = humanSize 1 ++ " bytes"
-    | size < 2 ^ 20  = humanSize (2 ^ 10)  ++ " KB"
-    | size < 2 ^ 30  = humanSize (2 ^ 20)  ++ " MB"
-    | size < 2 ^ 40  = humanSize (2 ^ 30)  ++ " GB"
-    | size < 2 ^ 50  = humanSize (2 ^ 40)  ++ " TB"
-    | size < 2 ^ 60  = humanSize (2 ^ 50)  ++ " PB"
-    | size < 2 ^ 70  = humanSize (2 ^ 60)  ++ " EB"
-    | size < 2 ^ 80  = humanSize (2 ^ 70)  ++ " ZB"
-    | size < 2 ^ 90  = humanSize (2 ^ 80)  ++ " YB"
-    | size < 2 ^ 100 = humanSize (2 ^ 90)  ++ " NB"
-    | size < 2 ^ 110 = humanSize (2 ^ 100) ++ " DB"
-    where humanSize base = printf "%.1f" (integralToDouble size / base) :: String
-
-integralToDouble :: Integral a => a -> Double
-integralToDouble v = fromIntegral v :: Double
-
-gTimeValToClockTime :: GTimeVal -> ClockTime
-gTimeValToClockTime GTimeVal {gTimeValSec  = seconds
-                             ,gTimeValUSec = microseconds} =
-    TOD (toInteger seconds) (toInteger microseconds * 1000)
