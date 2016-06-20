@@ -1,6 +1,6 @@
 
 PROGS  = hsfm
-SOURCES = Main.hs MainWindow.hs Misc.hs Files.hs
+SOURCES = Main.hs MainWindow.hs Files.hs
 
 all : $(PROGS)
 

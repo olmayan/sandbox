@@ -1,13 +1,12 @@
 module Files where
 
-import Misc
-
 --import Data.CaseInsensitive (CI)
 import Control.Monad
 import Data.Char (toLower)
 import Data.Maybe
 import Graphics.UI.Gtk
 import System.GIO
+import System.Glib.GDateTime
 import System.Time -- should be replaced with Data.Time
 import Text.Printf
 
@@ -109,3 +108,11 @@ formatFileSizeForDisplay size
     | size < 2 ^ 100 = humanSize (2 ^ 90)  ++ " NB"
     | size < 2 ^ 110 = humanSize (2 ^ 100) ++ " DB"
     where humanSize base = printf "%.1f" (integralToDouble size / base) :: String
+
+integralToDouble :: Integral a => a -> Double
+integralToDouble v = fromIntegral v :: Double
+
+gTimeValToClockTime :: GTimeVal -> ClockTime
+gTimeValToClockTime GTimeVal {gTimeValSec  = seconds
+                             ,gTimeValUSec = microseconds} =
+    TOD (toInteger seconds) (toInteger microseconds * 1000)

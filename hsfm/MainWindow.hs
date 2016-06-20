@@ -4,19 +4,30 @@ import Files
 
 import Control.Monad
 import Control.Monad.Trans (liftIO) -- Maybe delete in the Future
+import Data.Char (toLower)
 import Data.IORef
+import Data.Int
 import Data.List (intersect)
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Gdk.Events (Event(Key))
---import Graphics.UI.Gtk.General.IconTheme
---import Graphics.UI.Gtk.ModelView
+import Graphics.UI.Gtk.ModelView.TreeModel
 import System.FilePath.Posix
 import System.Directory
---import System.Glib.GDateTime
---import System.Glib.GError
-import System.Glib.UTFString
+import System.Glib.UTFString (glibToString)
 import System.Time -- should be replaced with Data.Time
 import qualified System.Locale as L
+
+data AppData = AppData {
+    window       :: Window,
+    entryAddr    :: Entry,
+    aGoBack      :: Action,
+    aGoForward   :: Action,
+    rawModel     :: ListStore FMInfo,
+    model        :: TypedTreeModelSort FMInfo,
+    curPath      :: FilePath,
+    backStack    :: [FilePath],
+    forwardStack :: [FilePath]
+}
 
 -- | Main.
 mainWindowNew :: IO Window
@@ -30,9 +41,6 @@ mainWindowNew = do
     vbox <- vBoxNew False 0
     hbox <- hBoxNew False 0
     window `containerAdd` vbox
-
-    -- Get file infos under specific directory.
-    curPath <- newIORef (""::FilePath)
 
     -- Initialize model for the tree view.
     rawModel <- listStoreNew ([]::[FMInfo])
@@ -53,26 +61,41 @@ mainWindowNew = do
     -- Set initial sorting.
     treeSortableSetSortColumnId model 2 SortAscending
 
+    -- Build the Go menu.
+    aGo <- actionNew "GO" "_Go" Nothing Nothing
+    aGoUp <- actionNew "GOUP" "_Up" Nothing $ Just stockGoUp
+    aGoBack <- actionNew "GOBACK" "_Back" Nothing $ Just stockGoBack
+    aGoForward <- actionNew "GOFORWARD" "_Forward" Nothing $ Just stockGoForward
+    aGoHome <- actionNew "GOHOME" "_Home folder" Nothing $ Just stockHome
+
+    -- Set up the global data storage.
+    homePath <- getHomeDirectory
+
+    appData <- newIORef AppData {
+        window       = window,
+        entryAddr    = entryAddr,
+        aGoBack      = aGoBack,
+        aGoForward   = aGoForward,
+        rawModel     = rawModel,
+        model        = model,
+        curPath      = homePath,
+        backStack    = [],
+        forwardStack = []
+        }
+
+    -- Bind events to actions.
+    aGoUp `onActionActivate` (goUp appData)
+    aGoBack `set` [ actionSensitive := False ]
+    aGoForward `set` [ actionSensitive := False ]
+    aGoHome `onActionActivate` (goHome appData)
+
     -- Create the action group.
     agr <- actionGroupNew "AGR"
-    
-    -- Building the Go menu.
-    aGo <- actionNew "GO" "_Go" Nothing Nothing
-    
-    aGoUp <- actionNew "GOUP" "_Up" Nothing $ Just stockGoUp
-    aGoUp `onActionActivate` (goUp curPath rawModel entryAddr)
-    
-    aGoBack <- actionNew "GOBACK" "_Back" Nothing $ Just stockGoBack
-
-    aGoForward <- actionNew "GOFORWARD" "_Forward" Nothing $ Just stockGoForward
-
-    aGoHome <- actionNew "GOHOME" "_Home folder" Nothing $ Just stockHome
-    aGoHome `onActionActivate` (goHome curPath rawModel entryAddr)
 
     actionGroupAddAction agr aGo
-    actionGroupAddAction agr aGoUp
-    actionGroupAddAction agr aGoBack
-    actionGroupAddAction agr aGoForward
+    actionGroupAddActionWithAccel agr aGoUp      (Just "BackSpace")
+    actionGroupAddActionWithAccel agr aGoBack    (Just "<Ctrl>Left")
+    actionGroupAddActionWithAccel agr aGoForward (Just "<Ctrl>Right")
     actionGroupAddAction agr aGoHome
 
     -- Initialize the menu bar.
@@ -93,21 +116,20 @@ mainWindowNew = do
     toolItem `set` [ toolItemExpand := True ]
     toolItem `containerAdd` entryAddr
     onKeyPress entryAddr $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
-        when (mods `intersect` [Control, Alt, Shift] == [] && glibToString keyName == "Return") $ do
+        when (null (mods `intersect` [Control, Alt, Shift]) && glibToString keyName == "Return") $ do
             newPath <- entryAddr `get` entryText
-            when (newPath /= "") $ walkPath newPath curPath rawModel entryAddr
+            when (newPath /= "") $ walkPath newPath appData
         return False
     toolbarInsert (castToToolbar toolbar) toolItem (-1)
 
     -- Initialize tree view.
     tv <- treeViewNewWithModel model
-    tv `set` [ treeViewEnableSearch := True]
     scrolledWindow `containerAdd` tv
     boxPackStart vbox scrolledWindow PackGrow 0
     onKeyPress tv $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
         --putStrLn $ glibToString keyName
-        when (elem mods [[], [Alt2]] && glibToString keyName == "BackSpace") $ goUp curPath rawModel entryAddr
-        return True
+        when (null (mods `intersect` [Control, Alt, Shift]) && glibToString keyName == "BackSpace") $ goUp appData
+        return False
 
     -- List Icons.
     tvc <- treeViewColumnNew
@@ -181,11 +203,20 @@ mainWindowNew = do
     tvc `treeViewColumnSetSortColumnId` 5
 
     -- TreeView Item DoubleClick.
-    tv `onRowActivated` (\path col -> MainWindow.rowActivated path col curPath model rawModel entryAddr)
+    tv `onRowActivated` (\path col -> MainWindow.rowActivated path col appData)
+    
+    -- TreeView search.
+    tv `set` [ treeViewEnableSearch := True
+             , treeViewSearchColumn := (makeColumnIdString 2 :: ColumnId String String) ]
+    let equalFunc :: String -> TreeIter -> IO Bool
+        equalFunc s iter = do
+            cIter <- treeModelSortConvertIterToChildIter model iter
+            FMInfo { fName = name } <- treeModelGetRow rawModel cIter
+            return $ take (length s) name == s
+    tv `treeViewSetSearchEqualFunc` (Just equalFunc)
 
     -- Walking to the default path.
-    homePath <- getHomeDirectory
-    walkPath homePath curPath rawModel entryAddr
+    walkPath homePath appData
 
     -- On destroy quit program.
     window `onDestroy` mainQuit
@@ -210,39 +241,51 @@ uiDecl = "<ui>\
 \           </toolbar>\
 \         </ui>"
 
-goUp :: IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
-goUp curPath rawModel entryAddr = do
-    path <- readIORef curPath
+goUp :: IORef AppData -> IO ()
+goUp appData = do
+    AppData { curPath = path } <- readIORef appData
     when (not $ isDrive path) $ do
-        walkPath (takeDirectory $ dropTrailingPathSeparator path) curPath rawModel entryAddr
+        walkPath (takeDirectory $ dropTrailingPathSeparator path) appData
 
-goHome :: IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
-goHome curPath rawModel entryAddr = do
+goHome :: IORef AppData -> IO ()
+goHome appData = do
     homePath <- getHomeDirectory
-    walkPath homePath curPath rawModel entryAddr
+    walkPath homePath appData
 
 rowActivated :: TreePath
              -> TreeViewColumn
-             -> IORef String
-             -> TypedTreeModelSort FMInfo
-             -> ListStore FMInfo
-             -> Entry
+             -> IORef AppData
              -> IO ()
-rowActivated path col curPath model rawModel entryAddr = do
+rowActivated path col appData = do
+    ad@AppData {
+        curPath   = curPath,
+        model     = model,
+        rawModel  = rawModel,
+        entryAddr = entryAddr
+        } <- readIORef appData
+
     (Just iter) <- treeModelGetIter model path
     cIter <- treeModelSortConvertIterToChildIter model iter
     fInfo@FMInfo { fName = name
                  , fDesc = desc } <- treeModelGetRow rawModel cIter
     when (desc == "folder") $ do
-        path <- readIORef curPath
-        let newPath = path `combine` name
-        walkPath newPath curPath rawModel entryAddr
+        let newPath = curPath `combine` name
+        walkPath newPath appData
     putStrLn $ dumpFMInfo fInfo
     
-walkPath :: FilePath -> IORef FilePath -> ListStore FMInfo -> Entry -> IO ()
-walkPath newPath curPath rawModel entryAddr = do
-    cPath <- readIORef curPath
-    let newPath' = addTrailingPathSeparator (if isRelative newPath'' then cPath `combine` newPath'' else newPath'') where 
+walkPath :: FilePath -> IORef AppData -> IO ()
+walkPath newPath appData = do
+    ad@AppData {
+        curPath      = curPath,
+        rawModel     = rawModel,
+        aGoBack      = aGoBack,
+        aGoForward   = aGoForward,
+        entryAddr    = entryAddr,
+        backStack    = [],
+        forwardStack = []
+        } <- readIORef appData
+    
+    let newPath' = addTrailingPathSeparator (if isRelative newPath'' then curPath `combine` newPath'' else newPath'') where 
         newPath'' = normalise newPath
     exists <- doesDirectoryExist newPath'
     readable <- if exists then do
@@ -250,13 +293,14 @@ walkPath newPath curPath rawModel entryAddr = do
         return $ readable permissions
                           else return False
     if exists && readable then do
-        writeIORef curPath newPath'
         fInfos <- directoryGetFMInfos newPath'
         listStoreClear rawModel
         mapM_ (rawModel `listStoreAppend`) fInfos
         entryAddr `set` [ entryText := newPath' ]
         let pos = length newPath'
         editableSelectRegion entryAddr pos pos
+        
+        writeIORef appData ad { curPath = newPath' }        
     else do
         parent <- widgetGetToplevel entryAddr
         dialog <- messageDialogNew
