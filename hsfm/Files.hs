@@ -1,13 +1,14 @@
 module Files where
 
---import Data.CaseInsensitive (CI)
 import Control.Monad
 import Data.Char (toLower)
 import Data.Maybe
+import Data.Time
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Graphics.UI.Gtk
 import System.GIO
 import System.Glib.GDateTime
-import System.Time -- should be replaced with Data.Time
 import Text.Printf
 
 import qualified Data.ByteString.UTF8 as UTF8
@@ -17,7 +18,7 @@ data FMInfo = FMInfo {
     fName :: String,               -- file name
     fDesc :: String,               -- mime type description
     fSize :: Integer,              -- file size
-    fTime :: ClockTime             -- modified time
+    fTime :: UTCTime               -- modified time
 }
 
 data Sorting =
@@ -70,7 +71,7 @@ directoryGetFMInfos directory = do
             -- File size.
             size = toInteger $ fileInfoGetSize info
             -- File modified time.
-            time = gTimeValToClockTime $ fileInfoGetModificationTime info
+            time = gTimeValToUTCTime $ fileInfoGetModificationTime info
             -- File mime description.
             Just contentType = fileInfoGetContentType info
             desc = contentTypeGetDescription contentType
@@ -112,7 +113,7 @@ formatFileSizeForDisplay size
 integralToDouble :: Integral a => a -> Double
 integralToDouble v = fromIntegral v :: Double
 
-gTimeValToClockTime :: GTimeVal -> ClockTime
-gTimeValToClockTime GTimeVal {gTimeValSec  = seconds
-                             ,gTimeValUSec = microseconds} =
-    TOD (toInteger seconds) (toInteger microseconds * 1000)
+gTimeValToUTCTime :: GTimeVal -> UTCTime
+gTimeValToUTCTime GTimeVal {gTimeValSec  = seconds
+                           ,gTimeValUSec = microseconds} =
+    posixSecondsToUTCTime . realToFrac . picosecondsToDiffTime $ (toInteger seconds) * 10 ^ 12 + (toInteger microseconds) * 10 ^ 6

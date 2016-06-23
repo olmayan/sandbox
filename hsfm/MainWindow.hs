@@ -8,14 +8,14 @@ import Data.Char (toLower)
 import Data.IORef
 import Data.Int
 import Data.List (intersect)
+import Data.Time.Format
+import Data.Time.LocalTime
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Gdk.Events (Event(Key))
 import Graphics.UI.Gtk.ModelView.TreeModel
 import System.FilePath.Posix
 import System.Directory
 import System.Glib.UTFString (glibToString)
-import System.Time -- should be replaced with Data.Time
-import qualified System.Locale as L
 
 data AppData = AppData {
     window       :: Window,
@@ -37,6 +37,8 @@ mainWindowNew = do
     windowSetDefaultSize window 900 600
     windowSetPosition window WinPosCenter
     scrolledWindow <- scrolledWindowNew Nothing Nothing
+    scrolledWindow `set` [ scrolledWindowHscrollbarPolicy := PolicyAutomatic
+                         , scrolledWindowVscrollbarPolicy := PolicyAutomatic ]
     entryAddr <- entryNew
     vbox <- vBoxNew False 0
     hbox <- hBoxNew False 0
@@ -195,11 +197,11 @@ mainWindowNew = do
 
     rend <- cellRendererTextNew
     treeViewColumnPackStart tvc rend True
+    tz <- getCurrentTimeZone
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
         FMInfo { fTime = time } <- treeModelGetRow rawModel cIter
-        calTime <- toCalendarTime time
-        rend `set` [ cellText := (formatCalendarTime L.defaultTimeLocale "%Y/%m/%d %T" calTime) ]
+        rend `set` [ cellText := (formatTime defaultTimeLocale "%Y/%m/%d %T" $ utcToLocalTime tz time) ]
     tvc `treeViewColumnSetSortColumnId` 5
 
     -- TreeView Item DoubleClick.
@@ -212,7 +214,7 @@ mainWindowNew = do
         equalFunc s iter = do
             cIter <- treeModelSortConvertIterToChildIter model iter
             FMInfo { fName = name } <- treeModelGetRow rawModel cIter
-            return $ take (length s) name == s
+            return $ compareCI (take (length s) name) s == EQ
     tv `treeViewSetSearchEqualFunc` (Just equalFunc)
 
     -- Walking to the default path.
@@ -292,7 +294,7 @@ walkPath newPath appData = do
         permissions <- getPermissions newPath'
         return $ readable permissions
                           else return False
-    if exists && readable then do
+    if readable then do
         fInfos <- directoryGetFMInfos newPath'
         listStoreClear rawModel
         mapM_ (rawModel `listStoreAppend`) fInfos
