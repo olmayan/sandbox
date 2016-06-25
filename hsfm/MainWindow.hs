@@ -31,7 +31,7 @@ data AppData = AppData {
     initialized  :: Bool
 }
 
-data Direction = Backwards | | Forwards deriving (Eq, Enum, Ord, Show)
+data Direction = Backwards | Forwards deriving (Eq, Enum, Ord, Show)
 
 -- | Main.
 mainWindowNew :: IO Window
