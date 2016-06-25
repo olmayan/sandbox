@@ -8,6 +8,7 @@ import Data.Char (toLower)
 import Data.IORef
 import Data.Int
 import Data.List (intersect)
+import Data.Maybe
 import Data.Time.Format
 import Data.Time.LocalTime
 import Graphics.UI.Gtk
@@ -26,8 +27,11 @@ data AppData = AppData {
     model        :: TypedTreeModelSort FMInfo,
     curPath      :: FilePath,
     backStack    :: [FilePath],
-    forwardStack :: [FilePath]
+    forwardStack :: [FilePath],
+    initialized  :: Bool
 }
+
+data Direction = Backwards | | Forwards deriving (Eq, Enum, Ord, Show)
 
 -- | Main.
 mainWindowNew :: IO Window
@@ -63,12 +67,21 @@ mainWindowNew = do
     -- Set initial sorting.
     treeSortableSetSortColumnId model 2 SortAscending
 
+    -- Build the View menu.
+    aView <- actionNew "VIEW" "_View" Nothing Nothing
+    aViewIcons <- actionNew "VIEWICONS" "_Icons" Nothing Nothing
+    aViewDetails <- actionNew "VIEWDETAILS" "_Details" Nothing Nothing
+    aViewCompact <- actionNew "VIEWCOMPACT" "_Compact" Nothing Nothing
+    
     -- Build the Go menu.
     aGo <- actionNew "GO" "_Go" Nothing Nothing
     aGoUp <- actionNew "GOUP" "_Up" Nothing $ Just stockGoUp
     aGoBack <- actionNew "GOBACK" "_Back" Nothing $ Just stockGoBack
     aGoForward <- actionNew "GOFORWARD" "_Forward" Nothing $ Just stockGoForward
     aGoHome <- actionNew "GOHOME" "_Home folder" Nothing $ Just stockHome
+    
+    aGoBack    `set` [ actionSensitive := False ]
+    aGoForward `set` [ actionSensitive := False ]
 
     -- Set up the global data storage.
     homePath <- getHomeDirectory
@@ -82,22 +95,28 @@ mainWindowNew = do
         model        = model,
         curPath      = homePath,
         backStack    = [],
-        forwardStack = []
+        forwardStack = [],
+        initialized  = False
         }
 
     -- Bind events to actions.
-    aGoUp `onActionActivate` (goUp appData)
-    aGoBack `set` [ actionSensitive := False ]
-    aGoForward `set` [ actionSensitive := False ]
-    aGoHome `onActionActivate` (goHome appData)
+    aGoUp      `onActionActivate` (goUp appData)
+    aGoBack    `onActionActivate` (goBack appData)
+    aGoForward `onActionActivate` (goForward appData)
+    aGoHome    `onActionActivate` (goHome appData)
 
     -- Create the action group.
     agr <- actionGroupNew "AGR"
+    
+    actionGroupAddAction agr aView
+    actionGroupAddActionWithAccel agr aViewIcons   (Just "<Ctrl>1")
+    actionGroupAddActionWithAccel agr aViewDetails (Just "<Ctrl>2")
+    actionGroupAddActionWithAccel agr aViewCompact (Just "<Ctrl>3")
 
     actionGroupAddAction agr aGo
-    actionGroupAddActionWithAccel agr aGoUp      (Just "BackSpace")
-    actionGroupAddActionWithAccel agr aGoBack    (Just "<Ctrl>Left")
-    actionGroupAddActionWithAccel agr aGoForward (Just "<Ctrl>Right")
+    actionGroupAddActionWithAccel agr aGoUp        (Just "BackSpace")
+    actionGroupAddActionWithAccel agr aGoBack      (Just "<Ctrl>Left")
+    actionGroupAddActionWithAccel agr aGoForward   (Just "<Ctrl>Right")
     actionGroupAddAction agr aGoHome
 
     -- Initialize the menu bar.
@@ -120,7 +139,7 @@ mainWindowNew = do
     onKeyPress entryAddr $ \(Key _ _ _ mods _ _ _ _ keyName _) -> do
         when (null (mods `intersect` [Control, Alt, Shift]) && glibToString keyName == "Return") $ do
             newPath <- entryAddr `get` entryText
-            when (newPath /= "") $ walkPath newPath appData
+            when (newPath /= "") $ walkPath newPath Nothing appData
         return False
     toolbarInsert (castToToolbar toolbar) toolItem (-1)
 
@@ -201,7 +220,7 @@ mainWindowNew = do
     cellLayoutSetAttributeFunc tvc rend model $ \iter -> do
         cIter <- treeModelSortConvertIterToChildIter model iter
         FMInfo { fTime = time } <- treeModelGetRow rawModel cIter
-        rend `set` [ cellText := (formatTime defaultTimeLocale "%Y/%m/%d %T" $ utcToLocalTime tz time) ]
+        rend `set` [ cellText := formatTime defaultTimeLocale "%Y/%m/%d %T" $ utcToLocalTime tz time ]
     tvc `treeViewColumnSetSortColumnId` 5
 
     -- TreeView Item DoubleClick.
@@ -218,7 +237,7 @@ mainWindowNew = do
     tv `treeViewSetSearchEqualFunc` (Just equalFunc)
 
     -- Walking to the default path.
-    walkPath homePath appData
+    walkPath homePath Nothing appData
 
     -- On destroy quit program.
     window `onDestroy` mainQuit
@@ -228,6 +247,11 @@ mainWindowNew = do
 uiDecl :: String
 uiDecl = "<ui>\
 \           <menubar>\
+\             <menu action=\"VIEW\">\
+\               <menuitem action=\"VIEWICONS\" />\
+\               <menuitem action=\"VIEWDETAILS\" />\
+\               <menuitem action=\"VIEWCOMPACT\" />\
+\             </menu>\
 \             <menu action=\"GO\">\
 \               <menuitem action=\"GOUP\" />\
 \               <menuitem action=\"GOBACK\" />\
@@ -247,12 +271,22 @@ goUp :: IORef AppData -> IO ()
 goUp appData = do
     AppData { curPath = path } <- readIORef appData
     when (not $ isDrive path) $ do
-        walkPath (takeDirectory $ dropTrailingPathSeparator path) appData
+        walkPath (takeDirectory $ dropTrailingPathSeparator path) Nothing appData
+
+goBack :: IORef AppData -> IO ()
+goBack appData = do
+    AppData { backStack = backStack@(x:_) } <- readIORef appData
+    when (not $ null backStack) $ walkPath x (Just Backwards) appData
+
+goForward :: IORef AppData -> IO ()
+goForward appData = do
+    AppData { forwardStack = forwardStack@(x:_) } <- readIORef appData
+    when (not $ null forwardStack) $ walkPath x (Just Forwards) appData
 
 goHome :: IORef AppData -> IO ()
 goHome appData = do
     homePath <- getHomeDirectory
-    walkPath homePath appData
+    walkPath homePath Nothing appData
 
 rowActivated :: TreePath
              -> TreeViewColumn
@@ -272,27 +306,26 @@ rowActivated path col appData = do
                  , fDesc = desc } <- treeModelGetRow rawModel cIter
     when (desc == "folder") $ do
         let newPath = curPath `combine` name
-        walkPath newPath appData
+        walkPath newPath Nothing appData
     putStrLn $ dumpFMInfo fInfo
-    
-walkPath :: FilePath -> IORef AppData -> IO ()
-walkPath newPath appData = do
+
+walkPath :: FilePath -> Maybe Direction -> IORef AppData -> IO ()
+walkPath newPath direction appData = do
     ad@AppData {
         curPath      = curPath,
         rawModel     = rawModel,
         aGoBack      = aGoBack,
         aGoForward   = aGoForward,
         entryAddr    = entryAddr,
-        backStack    = [],
-        forwardStack = []
+        backStack    = backStack,
+        forwardStack = forwardStack,
+        initialized  = initialized
         } <- readIORef appData
     
     let newPath' = addTrailingPathSeparator (if isRelative newPath'' then curPath `combine` newPath'' else newPath'') where 
         newPath'' = normalise newPath
     exists <- doesDirectoryExist newPath'
-    readable <- if exists then do
-        permissions <- getPermissions newPath'
-        return $ readable permissions
+    readable <- if exists then liftM readable $ getPermissions newPath'
                           else return False
     if readable then do
         fInfos <- directoryGetFMInfos newPath'
@@ -301,8 +334,28 @@ walkPath newPath appData = do
         entryAddr `set` [ entryText := newPath' ]
         let pos = length newPath'
         editableSelectRegion entryAddr pos pos
-        
-        writeIORef appData ad { curPath = newPath' }        
+
+        let backStack'    | not initialized = []
+                          | isJust direction && direction == (Just Backwards) =
+                               case backStack of []   -> []
+                                                 _:xs -> xs
+                          | otherwise       = curPath : backStack
+            forwardStack' | not initialized     = []
+                          | isJust direction && direction == (Just Forwards) =
+                               case forwardStack of []   -> []
+                                                    _:xs -> xs
+                          | isNothing direction = []
+                          | otherwise           = curPath : forwardStack
+
+        writeIORef appData ad { curPath      = newPath'
+                              , backStack    = backStack'
+                              , forwardStack = forwardStack'
+                              , initialized  = True
+                              }
+
+        aGoBack    `set` [ actionSensitive := not $ null backStack'    ]
+        aGoForward `set` [ actionSensitive := not $ null forwardStack' ]
+
     else do
         parent <- widgetGetToplevel entryAddr
         dialog <- messageDialogNew
