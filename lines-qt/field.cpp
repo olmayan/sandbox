@@ -49,12 +49,16 @@ int Field::colors()
     return c;
 }
 
-bool Field::throwBalls(Field *throwMap, int nBalls)
+bool Field::throwBalls(Field *pThrowMap, int nBalls, bool reset)
 {
     Field clone(this);
     int i, m, n = w * h;
     quint16 *points = new quint16[n];
     bool res = true;
+
+    if (reset)
+        for (i = 0; i < n; i ++)
+			pThrowMap->pField[i] = 0;
 
     while (nBalls--)
     {
@@ -69,7 +73,7 @@ bool Field::throwBalls(Field *throwMap, int nBalls)
         }
         if (!m) { res = false; break; }
         i = points[qrand() % m];
-        throwMap->pField[i] = clone.pField[i] = 1 + qrand() % c;
+		pThrowMap->pField[i] = clone.pField[i] = 1 + qrand() % c;
     }
 
     delete points;
@@ -79,7 +83,17 @@ bool Field::throwBalls(Field *throwMap, int nBalls)
 
 void Field::clear()
 {
-    memset(pField, 0, w * h);
+	memset(pField, 0, w * h * sizeof(int));
+}
+
+int Field::count()
+{
+	int n = 0;
+	for (int x = 0; x < w; x++)
+		for (int y = 0; y < h; y++)
+			if (cell(x, y))
+				n++;
+	return n;
 }
 
 bool Field::hasPath(int x1, int y1, int x2, int y2, Field *searchResult)
@@ -147,9 +161,9 @@ void Field::shortestPath(int x, int y, Field *searchResult)
             x--;
         else if (y > 0 && cell(x, y - 1) == c + 1)
             y--;
-        else if (x < W - 1 && cell(x + 1, y) == c + 1)
+		else if (x < w - 1 && cell(x + 1, y) == c + 1)
             x++;
-        else if (y < H - 1 && cell(x, y + 1) == c + 1)
+		else if (y < h - 1 && cell(x, y + 1) == c + 1)
             y++;
     }
 #ifdef QT_DEBUG
@@ -187,7 +201,7 @@ QLinkedList<QPoint> Field::waypoints(int x, int y)
             }
             y--;
         }
-        else if (x < W - 1 && cell(x + 1, y) == c + 1)
+		else if (x < w - 1 && cell(x + 1, y) == c + 1)
         {
             if (dir != 0)
             {
@@ -196,7 +210,7 @@ QLinkedList<QPoint> Field::waypoints(int x, int y)
             }
             x++;
         }
-        else if (y < H - 1 && cell(x, y + 1) == c + 1)
+		else if (y < h - 1 && cell(x, y + 1) == c + 1)
         {
             if (dir != 1)
             {
@@ -210,4 +224,118 @@ QLinkedList<QPoint> Field::waypoints(int x, int y)
     result.prepend(QPoint(x, y));
 
     return result;
+}
+
+bool Field::deletionMap(Field *searchResult, GameType gameType)
+{
+    int n;
+	bool res = false;
+	searchResult->clear();
+	for (int c, x = 0; x < w; x++)
+		for (int y = 0; y < h; y++)
+            if ((c = cell(x, y)))
+			{
+                switch (gameType)
+                {
+                case Lines:
+                    for (int k = 0; k < 4; k++)
+                        if ((n = lineLength(x, y, k)) >= 5)
+                        {
+                            searchResult->markLine(x, y, k, n);
+                            res = true;
+                        }
+                    break;
+                case Squares:
+                    if (x < w - 1 && y < h - 1 && c == cell(x + 1, y) && c == cell(x, y + 1) && c == cell(x + 1, y + 1))
+                    {
+                        searchResult->setCell(x, y, 1);
+                        searchResult->setCell(x + 1, y, 1);
+                        searchResult->setCell(x, y + 1, 1);
+                        searchResult->setCell(x + 1, y + 1, 1);
+                        res = true;
+                    }
+                    break;
+                case Blocks:
+                    if (blockSize(x, y) >= 7)
+                    {
+                        searchResult->setCell(x, y, 1);
+                        res = true;
+                    }
+                    break;
+                }
+
+			}
+	return res;
+}
+
+void Field::operator += (Field inclusion)
+{
+	inclusion = inclusion;
+}
+
+int Field::lineLength(int x0, int y0, int dir)
+{
+	int dx = (dir < 2) ? 1 : (dir < 3) ? 0 : -1, dy = (dir > 0) ? 1 : 0;
+	int x = x0, y = y0, n = 0;
+
+	while (x >= 0 && x < w && y < h && cell(x, y) == cell(x0, y0))
+	{
+		x += dx;
+		y += dy;
+		n++;
+	}
+	return n;
+}
+
+void Field::markLine(int x0, int y0, int dir, int length)
+{
+	int dx = (dir < 2) ? 1 : (dir < 3) ? 0 : -1, dy = (dir > 0) ? 1 : 0;
+	for (int x = x0, y = y0; length; x += dx, y += dy, length--)
+		setCell(x, y, 1);
+}
+
+int Field::blockSize(int x0, int y0)
+{
+    int c = cell(x0, y0), res = 1, step = -1;
+    Field search(w, h);
+    search.setCell(x0, y0, -1);
+    bool bContinue;
+    do
+    {
+        bContinue = false;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (search.cell(x, y) == step)
+                {
+                    if (x > 0 && cell(x - 1, y) == c && search.cell(x - 1, y) == 0)
+                    {
+                        search.setCell(x - 1, y, step - 1);
+                        bContinue = true;
+                        res++;
+                    }
+
+                    if (x < w - 1 && cell(x + 1, y) == c && search.cell(x + 1, y) == 0)
+                    {
+                        search.setCell(x + 1, y, step - 1);
+                        bContinue = true;
+                        res++;
+                    }
+
+                    if (y > 0 && cell(x, y - 1) == c && search.cell(x, y - 1) == 0)
+                    {
+                        search.setCell(x, y - 1, step - 1);
+                        bContinue = true;
+                        res++;
+                    }
+
+                    if (y < h - 1 && cell(x, y + 1) == c && search.cell(x, y + 1) == 0)
+                    {
+                        search.setCell(x, y + 1, step - 1);
+                        bContinue = true;
+                        res++;
+                    }
+                }
+        step--;
+    } while (bContinue);
+    return res;
 }
